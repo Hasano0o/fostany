@@ -302,6 +302,43 @@ async def start_bot_process(bot_id: str, info: dict) -> tuple[bool, str]:
     except Exception as e:
         return False, str(e)
 
+# ========== اكتشاف وحقن متغيرات البوت ==========
+
+# حالة الانتظار: {user_id: {"bot_id": str, "file": str, "name": str, "vars": list, "values": dict, "index": int}}
+_pending_vars: dict = {}
+
+def extract_bot_vars(code: str) -> list[str]:
+    """اكتشاف المتغيرات UPPER_CASE ذات القيمة الفارغة باستخدام ast.parse"""
+    found = []
+    try:
+        tree = ast.parse(code)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if not isinstance(target, ast.Name):
+                        continue
+                    name = target.id
+                    if not re.match(r'^[A-Z][A-Z0-9_]{2,}$', name):
+                        continue
+                    val = node.value
+                    if isinstance(val, ast.Constant) and val.value in ('', None):
+                        found.append(name)
+    except SyntaxError:
+        pass
+    return found
+
+def inject_vars_into_code(code: str, values: dict) -> str:
+    """حقن قيم المتغيرات في الكود عبر regex"""
+    for var_name, value in values.items():
+        escaped = value.replace('\\', '\\\\').replace('"', '\\"')
+        code = re.sub(
+            rf'^({re.escape(var_name)}\s*=\s*)[\'\"]{2}',
+            rf'\g<1>"{escaped}"',
+            code,
+            flags=re.MULTILINE
+        )
+    return code
+
 # ========== الواتشدوج (مراقب تلقائي) ==========
 _bot_ref: Bot = None
 
@@ -445,6 +482,33 @@ async def handle_upload(message: types.Message):
     save_db(db)
     log_action(f"رُفع بوت جديد: {fname} (ID: {bot_id})")
 
+    # ── اكتشاف المتغيرات الفارغة ──
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+            raw_code = f.read()
+        empty_vars = extract_bot_vars(raw_code)
+    except Exception:
+        empty_vars = []
+
+    if empty_vars:
+        _pending_vars[message.from_user.id] = {
+            "bot_id": bot_id,
+            "file":   str(file_path),
+            "name":   fname,
+            "vars":   empty_vars,
+            "values": {},
+            "index":  0,
+        }
+        first_var = empty_vars[0]
+        await message.answer(
+            f"📩 <b>بوت مرفوع:</b> <code>{fname}</code>\n\n"
+            f"🔑 <b>تم اكتشاف {len(empty_vars)} متغير فارغ.</b>\n"
+            f"سأسألك عن كل واحد خطوة بخطوة.\n\n"
+            f"<b>[1/{len(empty_vars)}]</b> أدخل قيمة المتغير:\n"
+            f"<code>{first_var}</code>"
+        )
+        return
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ موافقة وتشغيل", callback_data=f"approve_{bot_id}"),
          InlineKeyboardButton(text="🗑️ رفض وحذف",     callback_data=f"delete_{bot_id}")],
@@ -455,6 +519,59 @@ async def handle_upload(message: types.Message):
         f"📁 الاسم: <code>{fname}</code>\n"
         f"🆔 المعرف: <code>{bot_id}</code>\n"
         f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        f"⏳ بانتظار موافقتك يا حسن.",
+        reply_markup=kb
+    )
+
+# ─── استقبال قيم المتغيرات خطوة بخطوة ────────────────────
+@dp.message(F.text & ~F.text.startswith("/"))
+async def handle_var_input(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    state = _pending_vars.get(message.from_user.id)
+    if not state:
+        return
+
+    idx       = state["index"]
+    var_name  = state["vars"][idx]
+    state["values"][var_name] = message.text.strip()
+    idx += 1
+    state["index"] = idx
+
+    if idx < len(state["vars"]):
+        next_var = state["vars"][idx]
+        await message.answer(
+            f"✅ تم حفظ <code>{var_name}</code>\n\n"
+            f"<b>[{idx+1}/{len(state['vars'])}]</b> أدخل قيمة المتغير:\n"
+            f"<code>{next_var}</code>"
+        )
+        return
+
+    # اكتملت كل المتغيرات → حقن القيم في الملف
+    del _pending_vars[message.from_user.id]
+    try:
+        with open(state["file"], 'r', encoding='utf-8', errors='replace') as f:
+            code = f.read()
+        code = inject_vars_into_code(code, state["values"])
+        with open(state["file"], 'w', encoding='utf-8') as f:
+            f.write(code)
+        log_action(f"حقن متغيرات {state['name']}: {', '.join(state['values'].keys())}")
+    except Exception as e:
+        await message.answer(f"❌ خطأ في حقن المتغيرات: {e}")
+        return
+
+    bot_id = state["bot_id"]
+    vars_summary = "\n".join(f"  • <code>{k}</code> = <code>{v[:30]}{'…' if len(v)>30 else ''}</code>"
+                              for k, v in state["values"].items())
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ موافقة وتشغيل", callback_data=f"approve_{bot_id}"),
+         InlineKeyboardButton(text="🗑️ رفض وحذف",     callback_data=f"delete_{bot_id}")],
+        [InlineKeyboardButton(text="📄 عرض الكود",     callback_data=f"viewcode_{bot_id}")],
+    ])
+    await message.answer(
+        f"✅ <b>تم حقن جميع المتغيرات!</b>\n\n"
+        f"📁 <code>{state['name']}</code>\n\n"
+        f"🔑 <b>المتغيرات المحقونة:</b>\n{vars_summary}\n\n"
         f"⏳ بانتظار موافقتك يا حسن.",
         reply_markup=kb
     )
