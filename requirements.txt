@@ -1,0 +1,26 @@
+# الأساسيات وإدارة السيرفر
+aiogram
+psutil
+apscheduler
+pathlib
+
+# مشغلات n8n والتكاملات (Webhooks & API)
+requests
+aiohttp
+flask
+uvicorn
+fastapi
+
+# معالجة البيانات والوقت (توقيت مكة)
+pytz
+python-dotenv
+json5
+
+# قواعد البيانات للأتمتة
+aiosqlite
+redis
+
+# معالجة النصوص والويب
+beautifulsoup4
+lxml
+

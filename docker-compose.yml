@@ -1,0 +1,3 @@
+N8N_HOST=n8n.has-host.com
+N8N_PROTOCOL=https
+WEBHOOK_URL=https://n8n.has-host.com

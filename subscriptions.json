@@ -1,0 +1,26 @@
+{
+    "1776078744": {
+        "file": "/root/hosted_bots/DRO9O.py",
+        "name": "DRO9O.py",
+        "status": "broken",
+        "pid": 124567,
+        "upload_date": "2026-04-13 11:12:24",
+        "start_date": "2026-04-17 00:54:08"
+    },
+    "1776079420": {
+        "file": "/root/hosted_bots/ASRR.py",
+        "name": "ASRR.py",
+        "status": "broken",
+        "pid": 38953,
+        "upload_date": "2026-04-13 11:23:40",
+        "start_date": "2026-04-14 13:28:44"
+    },
+    "1776099338": {
+        "file": "/root/hosted_bots/TORYY.py",
+        "name": "TORYY.py",
+        "status": "broken",
+        "pid": 38956,
+        "upload_date": "2026-04-13 16:55:38",
+        "start_date": "2026-04-14 13:28:48"
+    }
+}
